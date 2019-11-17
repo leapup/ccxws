@@ -1,232 +1,230 @@
-const moment = require("moment");
-const semaphore = require("semaphore");
-const BasicClient = require("../basic-client");
-const BasicMultiClient = require("../basic-multiclient");
-const Watcher = require("../watcher");
-const Ticker = require("../ticker");
-const Trade = require("../trade");
-const Level2Point = require("../level2-point");
-const Level2Snapshot = require("../level2-snapshot");
-const Level2Update = require("../level2-update");
+const BasicClient = require('../basic-client');
+const Ticker = require('../ticker');
+const Trade = require('../trade');
+const Level2Point = require('../level2-point');
+const Level2Update = require('../level2-update');
+const moment = require('moment');
 
-class GateioClient extends BasicMultiClient {
-  constructor() {
-    super();
-
-    this.hasTickers = true;
+class GateIOClient extends BasicClient {
+  constructor(params) {
+    super("wss://ws.gate.io/v3", "Gateio", params.consumer);
+    this.consumer = params.consumer;
+    // this.hasTickers = true;
     this.hasTrades = true;
-    this.hasLevel2Snapshots = false;
     this.hasLevel2Updates = true;
-    this.throttleMs = 250;
-    this.sem = semaphore(1);
-  }
-
-  _createBasicClient() {
-    return new GateioSingleClient();
-  }
-}
-
-class GateioSingleClient extends BasicClient {
-  constructor() {
-    super("wss://ws.gate.io/v3", "Gateio");
-    this._watcher = new Watcher(this, 15 * 60 * 1000);
-    this.hasTickers = true;
-    this.hasTrades = true;
-    this.hasLevel2Snapshots = false;
-    this.hasLevel2Updates = true;
-    this.hasLevel3Updates = false;
-  }
-
-  _beforeConnect() {
-    this._wss.on("connected", this._startPing.bind(this));
-    this._wss.on("disconnected", this._stopPing.bind(this));
-    this._wss.on("closed", this._stopPing.bind(this));
-  }
-
-  _startPing() {
-    clearInterval(this._pingInterval);
+    this.hasLevel2Snapshots = true;
+    this.idMapping = [];
     this._pingInterval = setInterval(this._sendPing.bind(this), 30000);
   }
-
-  _stopPing() {
-    clearInterval(this._pingInterval);
-  }
-
   _sendPing() {
     if (this._wss) {
-      this._wss.send(
-        JSON.stringify({
-          method: "server.ping",
-        })
-      );
+      this._wss.send(JSON.stringify({ method: 'server.ping' }));
     }
   }
-
-  _sendSubTicker(remote_id) {
-    this._wss.send(
-      JSON.stringify({
-        method: "ticker.subscribe",
-        params: [remote_id.toUpperCase()],
-        id: 1,
-      })
-    );
-  }
-
-  _sendUnsubTicker() {
-    this._wss.send(
-      JSON.stringify({
-        method: "ticker.unsubscribe",
-      })
-    );
-  }
+  // _sendSubTicker(remote_id) {
+  //   this._wss.send(
+  //     JSON.stringify({
+  //       method: "subscribe",
+  //       params: {
+  //         channel: `lightning_ticker_${remote_id}`,
+  //       },
+  //     })
+  //   );
+  // }
+  //
+  // _sendUnsubTicker(remote_id) {
+  //   this._wss.send(
+  //     JSON.stringify({
+  //       method: "unsubscribe",
+  //       params: {
+  //         channel: `lightning_ticker_${remote_id}`,
+  //       },
+  //     })
+  //   );
+  // }
 
   _sendSubTrades(remote_id) {
     this._wss.send(
       JSON.stringify({
-        method: "trades.subscribe",
-        params: [remote_id.toUpperCase()],
-        id: 1,
-      })
-    );
-  }
-
-  _sendUnsubTrades() {
-    this._wss.send(
-      JSON.stringify({
-        method: "trades.unsubscribe",
-      })
+        method: 'subscribe',
+        params: {
+          channel: `lightning_executions_${remote_id}`,
+        },
+      }),
     );
   }
 
   _sendSubLevel2Updates(remote_id) {
+    let all_remotes = remote_id.map(remote_id => [remote_id, 30, '0.00000001']);
     this._wss.send(
       JSON.stringify({
-        method: "depth.subscribe",
-        params: [remote_id.toUpperCase(), 30, "0"], // 100 is the maximum number of items Gateio will let you request
-        id: 1,
-      })
+        method: 'depth.subscribe',
+        params: all_remotes,
+        id: this.getId(remote_id),
+      }),
     );
   }
 
-  _sendUnsubLevel2Updates() {
+  getId(key) {
+    let index = this.idMapping.indexOf(key);
+    if (index === -1) this.idMapping.push(key);
+    return index !== -1 ? index : this.idMapping.length - 1;
+  }
+
+  _sendSubLevel2Snapshots(remote_id) {
     this._wss.send(
       JSON.stringify({
-        method: "depth.unsubscribe",
-      })
+        method: 'depth.subscribe',
+        params: [remote_id, 30, '0.1'],
+        id: this.getId(remote_id),
+      }),
     );
   }
 
-  _onMessage(raw) {
-    let msg = JSON.parse(raw);
-    let { method, params } = msg;
+  _sendUnsubTrades(remote_id) {
+    throw new Error('not implemented');
+    // this._wss.send(
+    //   JSON.stringify({
+    //     method: "unsubscribe",
+    //     params: {
+    //       channel: `lightning_executions_${remote_id}`,
+    //     },
+    //   })
+    // );
+  }
 
-    // if params is not defined, then this is a response to an event that we don't care about (like the initial connection event)
-    if (!params) return;
+  _sendUnsubLevel2Updates(remote_id) {
+    throw new Error('not implemented');
+    // this._wss.send(
+    //   JSON.stringify({
+    //     method: "unsubscribe",
+    //     params: {
+    //       channel: `lightning_board_${remote_id}`,
+    //     },
+    //   })
+    // );
+  }
 
-    if (method === "ticker.update") {
-      let marketId = params[0].toLowerCase();
-      let market = this._tickerSubs.get(marketId);
-      if (!market) return;
+  _onResendMessages(){
+    for(let i=0;i<this.messages.length; i++){
+      this._onMessage(this.messages[i]);
+    }
+    console.log('done');
+  }
 
-      let ticker = this._constructTicker(params[1], market); //params[0][marketId] -> params[1]
-      this.emit("ticker", ticker, market);
+  _onMessage(data) {
+    let parsed = JSON.parse(data);
+    // if(parsed && parsed.error)
+    //   console.log(parsed.error);
+    if (!parsed || parsed.error) {
       return;
     }
-
-    if (method === "trades.update") {
-      let marketId = params[0].toLowerCase();
-      let market = this._tradeSubs.get(marketId);
-      if (!market) return;
-
-      params[1].reverse().forEach(t => {
-        let trade = this._constructTrade(t, market);
-        this.emit("trade", trade, market);
-      });
-      return;
-    }
-
-    if (method === "depth.update") {
-      let marketId = params[2].toLowerCase();
-      let market = this._level2UpdateSubs.get(marketId);
-      if (!market) return;
-
-      let isLevel2Snapshot = params[0];
-      if (isLevel2Snapshot) {
-        let l2snapshot = this._constructLevel2Snapshot(params[1], market);
-        this.emit("l2snapshot", l2snapshot, market);
-      } else {
-        let l2update = this._constructLevel2Update(params[1], market);
-        this.emit("l2update", l2update, market);
+    if (parsed.method === 'depth.update') {
+      if (parsed.params && parsed.params[1] && parsed.params[2]) {
+        if (parsed.params[0]) {
+          let update = this._constructLevel2Snapshot(parsed.params[2], parsed.params[1]);
+          this.emit('l2snapshot', update);
+          this.consumer.handleSnapshot(update);
+        } else {
+          let update = this._constructLevel2Snapshot(parsed.params[2], parsed.params[1]);
+          this.emit('l2update', update);
+          this.consumer.handleUpdate(update);
+        }
       }
-      return;
     }
+
+    // if (channel.startsWith("lightning_ticker_")) {
+    //   let remote_id = channel.substr("lightning_ticker_".length);
+    //   let ticker = this._createTicker(remote_id, message);
+    //   this.emit("ticker", ticker);
+    //   return;
+    // }
+    //
+    // // trades
+    // if (channel.startsWith("lightning_executions_")) {
+    //   let remote_id = channel.substr("lightning_executions_".length);
+    //   for (let datum of message) {
+    //     let trade = this._createTrades(remote_id, datum);
+    //     this.emit("trade", trade);
+    //   }
+    // }
+    // if (channel.startsWith("lightning_board_snapshot_")) {
+    //   // let remote_id = channel.substr("lightning_board_snapshot_".length);
+    //   let update = this._constructLevel2Snapshot(remote_id, message);
+    //   this.emit("l2snapshot", update);
+    // }
+    // else if (channel.startsWith("lightning_board_")) {
+    //   let remote_id = channel.substr("lightning_board_".length);
+    //   let update = this._createLevel2Update(remote_id, message);
+    //   this.emit("l2update", update);
+    // }
   }
 
-  _constructTicker(rawTick, market) {
-    let change = parseFloat(rawTick.last) - parseFloat(rawTick.open);
-    let changePercent =
-      ((parseFloat(rawTick.last) - parseFloat(rawTick.open)) / parseFloat(rawTick.open)) * 100;
-
+  _createTicker(remoteId, data) {
+    let { timestamp, best_bid, best_ask, best_bid_size, best_ask_size, ltp, volume, volume_by_product } = data;
+    let market = this._tickerSubs.get(remoteId);
     return new Ticker({
-      exchange: "Gateio",
+      exchange: 'GateIO',
       base: market.base,
       quote: market.quote,
-      timestamp: Date.now(),
-      last: rawTick.last,
-      open: rawTick.open,
-      high: rawTick.high,
-      low: rawTick.low,
-      volume: rawTick.baseVolume,
-      quoteVolume: rawTick.quoteVolume,
-      change: change.toFixed(8),
-      changePercent: changePercent.toFixed(8),
+      timestamp: moment.utc(timestamp).valueOf(),
+      last: ltp.toFixed(8),
+      volume: volume.toFixed(8),
+      quoteVolume: volume_by_product.toFixed(8),
+      bid: best_bid.toFixed(8),
+      bidVolume: best_bid_size.toFixed(8),
+      ask: best_ask.toFixed(8),
+      askVolume: best_ask_size.toFixed(8),
     });
   }
 
-  _constructTrade(rawTrade, market) {
-    let { id, time, type, price, amount } = rawTrade;
+  _createTrades(remoteId, datum) {
+    let { size, side, exec_date, price, id } = datum;
+    let market = this._tradeSubs.get(remoteId);
 
-    let unix = moment.utc(time * 1000).valueOf();
+    side = side.toLowerCase();
+    let unix = moment(exec_date).valueOf();
 
     return new Trade({
-      exchange: "Gateio",
+      exchange: 'GateIO',
       base: market.base,
       quote: market.quote,
-      tradeId: id.toFixed(),
+      tradeId: id,
       unix,
-      side: type,
-      price,
-      amount,
+      side: side.toLowerCase(),
+      price: price.toFixed(15),
+      amount: size.toFixed(15),
     });
   }
 
-  _constructLevel2Snapshot(rawUpdate, market) {
-    let { bids, asks } = rawUpdate,
-      structuredBids = bids ? bids.map(([price, size]) => new Level2Point(price, size)) : [],
-      structuredAsks = asks ? asks.map(([price, size]) => new Level2Point(price, size)) : [];
-
-    return new Level2Snapshot({
-      exchange: "Gateio",
-      base: market.base,
-      quote: market.quote,
-      bids: structuredBids,
-      asks: structuredAsks,
-    });
-  }
-
-  _constructLevel2Update(rawUpdate, market) {
-    let { bids, asks } = rawUpdate,
-      structuredBids = bids ? bids.map(([price, size]) => new Level2Point(price, size)) : [],
-      structuredAsks = asks ? asks.map(([price, size]) => new Level2Point(price, size)) : [];
+  // prettier-ignore
+  _constructLevel2Snapshot(remote_id, msg) {
+    let market = this._level2UpdateSubs.get(remote_id);
+    let asks = msg.asks ? msg.asks.map(p => new Level2Point(p[0], p[1])): [];
+    let bids = msg.bids ? msg.bids.map(p => new Level2Point(p[0], p[1])) : [];
 
     return new Level2Update({
-      exchange: "Gateio",
+      exchange: "GateIO",
       base: market.base,
       quote: market.quote,
-      bids: structuredBids,
-      asks: structuredAsks,
+      asks,
+      bids,
+    });
+  }
+
+  _createLevel2Update(remote_id, msg) {
+    let market = this._level2UpdateSubs.get(remote_id);
+    let asks = msg.asks.map(p => new Level2Point(p.price, p.size));
+    let bids = msg.bids.map(p => new Level2Point(p.price.toFixed(15), p.size.toFixed(15)));
+
+    return new Level2Update({
+      exchange: 'GateIO',
+      base: market.base,
+      quote: market.quote,
+      asks,
+      bids,
     });
   }
 }
 
-module.exports = GateioClient;
+module.exports = GateIOClient;

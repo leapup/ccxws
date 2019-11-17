@@ -1,109 +1,39 @@
-const crypto = require("crypto");
+const winston = require("winston");
 const Ticker = require("../ticker");
 const Trade = require("../trade");
 const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
+const BasicAuthClient = require("../basic-auth-client");
 const BasicMultiClient = require("../basic-multiclient");
-const BasicClient = require("../basic-client");
 const Watcher = require("../watcher");
 
-function createSignature(timestamp, apiKey, apiSecret) {
-  var hmac = crypto.createHmac("sha256", apiSecret);
-  hmac.update(timestamp + apiKey);
-  return hmac.digest("hex");
-}
-
-function createAuthToken(apiKey, apiSecret) {
-  var timestamp = Math.floor(Date.now() / 1000);
-  return {
-    key: apiKey,
-    signature: createSignature(timestamp, apiKey, apiSecret),
-    timestamp,
-  };
-}
-
-const multiplier = {
-  BCH: 1e8,
-  BTC: 1e8,
-  BTG: 1e8,
-  BTT: 1e6,
-  DASH: 1e8,
-  ETH: 1e6,
-  GUSD: 1e2,
-  LTC: 1e8,
-  MHC: 1e6,
-  OMG: 1e6,
-  TRX: 1e6,
-  XLM: 1e7,
-  XRP: 1e6,
-  ZEC: 1e8,
-};
-
-function formatAmount(amount, symbol) {
-  return (parseInt(amount) / multiplier[symbol]).toFixed(8);
-}
-
 class CexClient extends BasicMultiClient {
-  /**
-   * Creates a new CEX.io client using the supplied credentials
-   * @param {{ apiKey: string, apiSecret: string }} auth
-   */
-  constructor(auth) {
-    super();
+  constructor(args) {
+    super(args);
     this._clients = new Map();
-
+    this.consumer = args.consumer;
     this._name = "CEX_MULTI";
-    this.auth = auth;
+    this.auth = args;
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Snapshots = true;
   }
 
   _createBasicClient(clientArgs) {
-    return new SingleCexClient({ auth: this.auth, market: clientArgs.market });
+    return new SingleCexClient({ auth: this.auth, market: clientArgs.market, consumer: this.consumer });
   }
 }
 
-class SingleCexClient extends BasicClient {
+class SingleCexClient extends BasicAuthClient {
   constructor(args) {
-    super("wss://ws.cex.io/ws", "CEX");
+    super("wss://ws.cex.io/ws", "CEX", args.consumer);
     this._watcher = new Watcher(this, 15 * 60 * 1000);
+    this.consumer = args.consumer;
     this.auth = args.auth;
     this.market = args.market;
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Snapshots = true;
-    this.authorized = false;
-  }
-
-  /**
-   * This method is fired anytime the socket is opened, whether
-   * the first time, or any subsequent reconnects.
-   * Since this is an authenticated feed, we first send an authenticate
-   * request, and the normal subscriptions happen after authentication has
-   * completed in the _onAuthorized method.
-   */
-  _onConnected() {
-    this._sendAuthorizeRequest();
-  }
-
-  /**
-   * Trigger after an authorization packet has been successfully received.
-   * This code triggers the usual _onConnected code afterwards.
-   */
-  _onAuthorized() {
-    this.authorized = true;
-    this.emit("authorized");
-    super._onConnected();
-  }
-
-  _sendAuthorizeRequest() {
-    this._wss.send(
-      JSON.stringify({
-        e: "auth",
-        auth: createAuthToken(this.auth.apiKey, this.auth.apiSecret),
-      })
-    );
   }
 
   _sendPong() {
@@ -113,7 +43,6 @@ class SingleCexClient extends BasicClient {
   }
 
   _sendSubTicker() {
-    if (!this.authorized) return;
     this._wss.send(
       JSON.stringify({
         e: "subscribe",
@@ -125,11 +54,12 @@ class SingleCexClient extends BasicClient {
   _sendUnsubTicker() {}
 
   _sendSubTrades(remote_id) {
-    if (!this.authorized) return;
+    let localRemote_id = remote_id; //`pair-${remote_id}`;
+    winston.info("subscribing to trades", "CEX", localRemote_id);
     this._wss.send(
       JSON.stringify({
         e: "subscribe",
-        rooms: [`pair-${remote_id.replace("/", "-")}`],
+        rooms: [remote_id],
       })
     );
   }
@@ -137,87 +67,14 @@ class SingleCexClient extends BasicClient {
   _sendUnsubTrades() {}
 
   _sendSubLevel2Snapshots(remote_id) {
-    if (!this.authorized) return;
+    let localRemote_id = remote_id;
+    winston.info("subscribing to level2 snapshots", "SINGLE CEX", localRemote_id);
     this._wss.send(
       JSON.stringify({
         e: "subscribe",
-        rooms: [`pair-${remote_id.replace("/", "-")}`],
+        rooms: [remote_id],
       })
     );
-  }
-
-  _sendUnsubLevel2Snapshots() {}
-
-  _onMessage(raw) {
-    let message = JSON.parse(raw);
-    let { e, data } = message;
-
-    if (e === "ping") {
-      this._sendPong();
-      return;
-    }
-
-    if (e === "subscribe") {
-      if (message.error) {
-        throw new Error(`CEX error: ${JSON.stringify(message)}`);
-      }
-    }
-
-    if (e === "auth") {
-      if (data.ok === "ok") {
-        this._onAuthorized();
-      } else {
-        throw new Error("Authentication error");
-      }
-      return;
-    }
-
-    if (e === "tick") {
-      // {"e":"tick","data":{"symbol1":"BTC","symbol2":"USD","price":"4244.4","open24":"4248.4","volume":"935.58669239"}}
-      let marketId = `${data.symbol1}/${data.symbol2}`;
-      let market = this._tickerSubs.get(marketId);
-      if (!market) return;
-
-      let ticker = this._constructTicker(data, market);
-      this.emit("ticker", ticker, market);
-      return;
-    }
-
-    if (e === "md") {
-      let marketId = data.pair.replace(":", "/");
-      let market = this._level2SnapshotSubs.get(marketId);
-      if (!market) return;
-
-      let result = this._constructevel2Snapshot(data, market);
-      this.emit("l2snapshot", result, market);
-      return;
-    }
-
-    if (e === "history") {
-      let marketId = this.market.id;
-      let market = this._tradeSubs.get(marketId);
-      if (!market) return;
-
-      // sell/buy:timestamp_ms:amount:price:transaction_id
-      for (let rawTrade of data.reverse()) {
-        let tradeData = rawTrade.split(":");
-        let trade = this._constructTrade(tradeData, market);
-        this.emit("trade", trade, market);
-      }
-      return;
-    }
-
-    if (e === "history-update") {
-      let marketId = this.market.id;
-      let market = this._tradeSubs.get(marketId);
-      if (this._tradeSubs.has(marketId)) {
-        for (let rawTrade of data) {
-          let trade = this._constructTrade(rawTrade, market);
-          this.emit("trade", trade, market);
-        }
-        return;
-      }
-    }
   }
 
   _constructTicker(data, market) {
@@ -235,15 +92,35 @@ class SingleCexClient extends BasicClient {
       last: price,
       open: open24,
       volume: volume,
-      change: change.toFixed(8),
-      changePercent: changePercent.toFixed(8),
+      change: change,
+      changePercent: changePercent,
     });
   }
 
   _constructevel2Snapshot(msg, market) {
-    let asks = msg.sell.map(p => new Level2Point(p[0].toFixed(8), formatAmount(p[1], market.base)));
-    let bids = msg.buy.map(p => new Level2Point(p[0].toFixed(8), formatAmount(p[1], market.base)));
+    let multiplier;
+    switch (market.base) {
+      case 'BTG':
+      case 'BTC':
+      case 'BCH':
+      case 'LTC':
+      case 'ZEC':
+      case 'DASH':
+        multiplier = 0.00000001;
+        break;
+      case 'GUSD':
+        multiplier = 0.01;
+        break;
+      case 'XLM':
+        multiplier = 0.0000001;
+        break;
+      default:
+        multiplier = 0.000001;
+        break;
+    }
 
+    let asks = msg.sell.map(p => new Level2Point(p[0], p[1] * multiplier));
+    let bids = msg.buy.map(p => new Level2Point(p[0], p[1] * multiplier));
     return new Level2Snapshot({
       exchange: "CEX",
       base: market.base,
@@ -267,9 +144,82 @@ class SingleCexClient extends BasicClient {
       unix: parseInt(timestamp_ms),
       side: side,
       price: price,
-      amount: formatAmount(amount, market.base),
-      rawAmount: amount,
+      amount: amount,
     });
+  }
+
+  _onMessage(raw) {
+    let message = JSON.parse(raw);
+    let { e, data } = message;
+
+    if (e === "ping") {
+      this._sendPong();
+      return;
+    }
+
+    if (e === "subscribe") {
+      if (message.error) {
+        throw new Error(`CEX error: ${message.error}`);
+      }
+    }
+
+    if (e === "auth") {
+      if (data.ok === "ok") {
+        this._onAuthorized();
+      } else {
+        throw new Error("Authentication error");
+      }
+      return;
+    }
+
+    if (e === "tick") {
+      // {"e":"tick","data":{"symbol1":"BTC","symbol2":"USD","price":"4244.4","open24":"4248.4","volume":"935.58669239"}}
+      let marketId = `${data.symbol1}-${data.symbol2}`;
+      let market = this._tickerSubs.get(marketId);
+      if (!market) return;
+
+      let ticker = this._constructTicker(data, market);
+      this.emit("ticker", ticker, market);
+      this.consumer.handleTicker(ticker);
+      return;
+    }
+
+    if (e === "md") {
+      let marketId = data.pair.replace(":", "-");
+      let market = this._level2SnapshotSubs.get(marketId);
+      if (!market) return;
+
+      let result = this._constructevel2Snapshot(data, market);
+      this.emit('l2snapshot');
+      this.consumer.handleSnapshot(result);
+      return;
+    }
+
+    if (e === "history") {
+      let marketId = this.market.id;
+      let market = this._tradeSubs.get(marketId);
+      if (!market) return;
+
+      // sell/buy:timestamp_ms:amount:price:transaction_id
+      for (let rawTrade of data) {
+        let tradeData = rawTrade.split(":");
+        let trade = this._constructTrade(tradeData, market);
+        this.emit("trade", trade, market);
+      }
+      return;
+    }
+
+    if (e === "history-update") {
+      let marketId = this.market.id;
+      let market = this._tradeSubs.get(marketId);
+      if (this._tradeSubs.has(marketId)) {
+        for (let rawTrade of data) {
+          let trade = this._constructTrade(rawTrade, market);
+          this.emit("trade", trade);
+        }
+        return;
+      }
+    }
   }
 }
 

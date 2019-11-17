@@ -9,8 +9,9 @@ const Level3Point = require("../level3-point");
 const Level3Update = require("../level3-update");
 
 class CoinbaseProClient extends BasicClient {
-  constructor() {
-    super("wss://ws-feed.pro.coinbase.com", "CoinbasePro");
+  constructor(params) {
+    super("wss://ws-feed.pro.coinbase.com", "gdax", params.consumer);
+    this.consumer = params.consumer;
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Spotshots = false;
@@ -22,16 +23,6 @@ class CoinbaseProClient extends BasicClient {
     this._wss.send(
       JSON.stringify({
         type: "subscribe",
-        product_ids: [remote_id],
-        channels: ["ticker"],
-      })
-    );
-  }
-
-  _sendUnsubTicker(remote_id) {
-    this._wss.send(
-      JSON.stringify({
-        type: "unsubscribe",
         product_ids: [remote_id],
         channels: ["ticker"],
       })
@@ -107,6 +98,7 @@ class CoinbaseProClient extends BasicClient {
       let market = this._tickerSubs.get(product_id);
       let ticker = this._constructTicker(msg, market);
       this.emit("ticker", ticker, market);
+      this.consumer.handleTicker(ticker);
     }
 
     if (type === "match" && this._tradeSubs.has(product_id)) {
@@ -118,13 +110,15 @@ class CoinbaseProClient extends BasicClient {
     if (type === "snapshot" && this._level2UpdateSubs.has(product_id)) {
       let market = this._level2UpdateSubs.get(product_id);
       let snapshot = this._constructLevel2Snapshot(msg, market);
-      this.emit("l2snapshot", snapshot, market);
+      this.emit('l2snapshot');
+      this.consumer.handleSnapshot(snapshot);
     }
 
     if (type === "l2update" && this._level2UpdateSubs.has(product_id)) {
       let market = this._level2UpdateSubs.get(product_id);
       let update = this._constructLevel2Update(msg, market);
-      this.emit("l2update", update, market);
+      this.emit('l2update');
+      this.consumer.handleUpdate(update);
     }
 
     if (
@@ -133,7 +127,8 @@ class CoinbaseProClient extends BasicClient {
     ) {
       let market = this._level3UpdateSubs.get(product_id);
       let update = this._constructLevel3Update(msg, market);
-      this.emit("l3update", update, market);
+      this.emit('l2update');
+      this.consumer.handleUpdate(update);
       return;
     }
   }
@@ -143,7 +138,7 @@ class CoinbaseProClient extends BasicClient {
     let change = parseFloat(price) - parseFloat(open_24h);
     let changePercent = ((parseFloat(price) - parseFloat(open_24h)) / parseFloat(open_24h)) * 100;
     return new Ticker({
-      exchange: "CoinbasePro",
+      exchange: "gdax",
       base: market.base,
       quote: market.quote,
       timestamp: moment.utc(time).valueOf(),
@@ -152,8 +147,8 @@ class CoinbaseProClient extends BasicClient {
       high: high_24h,
       low: low_24h,
       volume: volume_24h,
-      change: change.toFixed(8),
-      changePercent: changePercent.toFixed(8),
+      change: change,
+      changePercent: changePercent,
       bid: best_bid,
       ask: best_ask,
     });
@@ -171,10 +166,10 @@ class CoinbaseProClient extends BasicClient {
     let sellOrderId = side === "sell" ? maker_order_id : taker_order_id;
 
     return new Trade({
-      exchange: "CoinbasePro",
+      exchange: "gdax",
       base: market.base,
       quote: market.quote,
-      tradeId: trade_id.toFixed(),
+      tradeId: trade_id,
       unix,
       side,
       price,
@@ -190,7 +185,7 @@ class CoinbaseProClient extends BasicClient {
     asks = asks.map(([price, size]) => new Level2Point(price, size));
 
     return new Level2Snapshot({
-      exchange: "CoinbasePro",
+      exchange: "gdax",
       base: market.base,
       quote: market.quote,
       bids,
@@ -209,7 +204,7 @@ class CoinbaseProClient extends BasicClient {
     });
 
     return new Level2Update({
-      exchange: "CoinbasePro",
+      exchange: "gdax",
       base: market.base,
       quote: market.quote,
       asks,
@@ -270,7 +265,7 @@ class CoinbaseProClient extends BasicClient {
     else bids.push(point);
 
     return new Level3Update({
-      exchange: "CoinbasePro",
+      exchange: "gdax",
       base: market.base,
       quote: market.quote,
       sequenceId,

@@ -1,4 +1,5 @@
 const { EventEmitter } = require("events");
+const winston = require("winston");
 const zlib = require("zlib");
 const Watcher = require("../watcher");
 const BasicClient = require("../basic-client");
@@ -6,7 +7,7 @@ const Ticker = require("../ticker");
 const Trade = require("../trade");
 const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
-const { MarketObjectTypes } = require("../enums");
+const MarketObjectTypes = require("../enums");
 const semaphore = require("semaphore");
 const { wait } = require("../util");
 
@@ -37,10 +38,8 @@ class BiboxClient extends EventEmitter {
 
     this.hasTickers = true;
     this.hasTrades = true;
-    this.hasCandles = false;
     this.hasLevel2Snapshots = true;
     this.hasLevel2Updates = false;
-    this.hasLevel3Snapshots = false;
     this.hasLevel3Updates = false;
     this.subsPerClient = 20;
     this.throttleMs = 200;
@@ -68,13 +67,14 @@ class BiboxClient extends EventEmitter {
   }
 
   unsubscribeLevel2Snapshots(market) {
-    this._unsubscribe(market, MarketObjectTypes.level2snapshot);
+    this._unsubscribe(market, MarketObjectTypes.level2Snapshot);
   }
 
-  close() {
+  close(emitClosed = true) {
     for (let client of this._clients) {
       client.close();
     }
+    if (emitClosed) this.emit("closed");
   }
 
   async reconnect() {
@@ -126,16 +126,9 @@ class BiboxClient extends EventEmitter {
       client = new BiboxBasicClient();
 
       // wire up the events to pass through
-      client.on("connecting", () => this.emit("connecting", market, marketObjectType));
-      client.on("connected", () => this.emit("connected", market, marketObjectType));
-      client.on("disconnected", () => this.emit("disconnected", market, marketObjectType));
-      client.on("reconnecting", () => this.emit("reconnecting", market, marketObjectType));
-      client.on("closing", () => this.emit("closing", market, marketObjectType));
-      client.on("closed", () => this.emit("closed", market, marketObjectType));
       client.on("ticker", (ticker, market) => this.emit("ticker", ticker, market));
       client.on("trade", (trade, market) => this.emit("trade", trade, market));
       client.on("l2snapshot", (l2snapshot, market) => this.emit("l2snapshot", l2snapshot, market));
-      client.on("error", err => this.emit("error", err));
 
       // push it into the list of clients
       this._clients.push(client);
@@ -171,7 +164,7 @@ class BiboxClient extends EventEmitter {
     if (!client) return;
 
     // perform the unsubscribe operation
-    switch (marketObjectType) {
+    switch (MarketObjectTypes) {
       case MarketObjectTypes.ticker:
         client.unsubscribeTicker(market);
         break;
@@ -320,9 +313,7 @@ class BiboxBasicClient extends BasicClient {
 
     // watch for error messages
     if (msg.error) {
-      let err = new Error(msg.error);
-      err.message = msg;
-      this.emit("error", err);
+      winston.error(msg);
       return;
     }
 
@@ -398,11 +389,11 @@ class BiboxBasicClient extends BasicClient {
       quote: market.quote,
       timestamp,
       last,
-      open: open.toFixed(8),
+      open: open,
       high: high,
       low: low,
       volume: vol,
-      change: change.toFixed(8),
+      change: change,
       changePercent: percent,
       bid: buy,
       ask: sell,

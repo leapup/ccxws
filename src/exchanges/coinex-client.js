@@ -1,4 +1,5 @@
 const moment = require("moment");
+const winston = require("winston");
 const BasicClient = require("../basic-client");
 const BasicMultiClient = require("../basic-multiclient");
 const Watcher = require("../watcher");
@@ -7,25 +8,28 @@ const Trade = require("../trade");
 const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
 const Level2Update = require("../level2-update");
-const { MarketObjectTypes } = require("../enums");
+const MarketObjectTypes = require("../enums");
 
 class CoinexClient extends BasicMultiClient {
-  constructor() {
-    super();
-
+  constructor(params) {
+    super(params);
+    this.consumer = params.consumer;
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Updates = true;
   }
 
   _createBasicClient() {
-    return new CoinexSingleClient();
+    return new CoinexSingleClient({consumer:this.consumer});
   }
 }
 
 class CoinexSingleClient extends BasicClient {
-  constructor() {
-    super("wss://socket.coinex.com/", "Coinex");
+  constructor(params) {
+    super("wss://socket.coinex.com/", "Coinex", params.consumer);
+    this.on("connected", this._startPing.bind(this));
+    this.on("disconnected", this._stopPing.bind(this));
+    this.consumer = params.consumer;
     this._watcher = new Watcher(this, 15 * 60 * 1000);
     this.hasTickers = true;
     this.hasTrades = true;
@@ -37,14 +41,7 @@ class CoinexSingleClient extends BasicClient {
     this._idSubMap = new Map();
   }
 
-  _beforeConnect() {
-    this._wss.on("connected", this._startPing.bind(this));
-    this._wss.on("disconnected", this._stopPing.bind(this));
-    this._wss.on("closed", this._stopPing.bind(this));
-  }
-
   _startPing() {
-    clearInterval(this._pingInterval);
     this._pingInterval = setInterval(this._sendPing.bind(this), 30000);
   }
 
@@ -71,6 +68,8 @@ class CoinexSingleClient extends BasicClient {
 
     // unsubscribe from the appropriate event
     let { type, remote_id } = sub;
+
+    winston.error(`failed to subscribe to ${remote_id}, please retry subscription`);
 
     // unsubscribe from the appropriate thiing
     switch (type) {
@@ -134,7 +133,7 @@ class CoinexSingleClient extends BasicClient {
     this._wss.send(
       JSON.stringify({
         method: "depth.subscribe",
-        params: [remote_id, 50, "0"],
+        params: [remote_id, 50, "0"], // 100 is the maximum number of items Coinex will let you request
         id,
       })
     );
@@ -155,7 +154,6 @@ class CoinexSingleClient extends BasicClient {
 
     // unsubscribe on failures
     if (error) {
-      this.emit("error", msg);
       this._failSubscription(id);
       return;
     }
@@ -171,6 +169,7 @@ class CoinexSingleClient extends BasicClient {
 
       let ticker = this._constructTicker(params[0][marketId], market);
       this.emit("ticker", ticker, market);
+      this.consumer.handleTicker(ticker);
       return;
     }
 
@@ -194,10 +193,12 @@ class CoinexSingleClient extends BasicClient {
       let isLevel2Snapshot = params[0];
       if (isLevel2Snapshot) {
         let l2snapshot = this._constructLevel2Snapshot(params[1], market);
-        this.emit("l2snapshot", l2snapshot, market);
+        this.emit('l2snapshot');
+        this.consumer.handleSnapshot(l2snapshot);
       } else {
         let l2update = this._constructLevel2Update(params[1], market);
-        this.emit("l2update", l2update, market);
+        this.emit('l2update');
+        this.consumer.handleUpdate(l2update);
       }
       return;
     }
@@ -219,8 +220,8 @@ class CoinexSingleClient extends BasicClient {
       low: low,
       volume: volume,
       quoteVolume: deal,
-      change: change.toFixed(8),
-      changePercent: changePercent.toFixed(8),
+      change: change,
+      changePercent: changePercent,
     });
   }
 
@@ -233,7 +234,7 @@ class CoinexSingleClient extends BasicClient {
       exchange: "Coinex",
       base: market.base,
       quote: market.quote,
-      tradeId: id.toFixed(),
+      tradeId: id,
       unix: unix,
       side: type,
       price,

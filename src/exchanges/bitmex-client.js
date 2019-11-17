@@ -112,8 +112,8 @@ class BitmexClient extends BasicClient {
       tradeId: trdMatchID.replace(/-/g, ""),
       unix,
       side: side.toLowerCase(),
-      price: price.toFixed(8),
-      amount: size.toFixed(8),
+      price: price,
+      amount: size,
       raw: datum, // attach the raw data incase it is needed in raw format
     });
   }
@@ -133,11 +133,11 @@ class BitmexClient extends BasicClient {
       // Per the documentation, the id is a unique value for the
       // market and the price.
       if (this.constructL2Price) {
-        this.l2PriceMap.set(datum.id, datum.price.toFixed(8));
+        this.l2PriceMap.set(datum.id, datum.price);
       }
 
       // build the data point
-      let point = new Level2Point(datum.price.toFixed(8), datum.size.toFixed(8), undefined, {
+      let point = new Level2Point(datum.price, datum.size, undefined, {
         id: datum.id,
       });
 
@@ -221,7 +221,7 @@ class BitmexClient extends BasicClient {
           // inserts will contain the price, we need to set these in the map
           // we can also directly use the price value
           case "insert":
-            price = datum.price.toFixed(8);
+            price = datum.price;
             this.l2PriceMap.set(datum.id, price);
             break;
           // update will require us to look up the price from the map
@@ -242,10 +242,10 @@ class BitmexClient extends BasicClient {
       switch (action) {
         case "insert":
         case "update":
-          size = datum.size.toFixed(8);
+          size = datum.size;
           break;
         case "delete":
-          size = (0).toFixed(8);
+          size = (0);
           break;
       }
 

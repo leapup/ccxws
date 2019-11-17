@@ -1,19 +1,18 @@
 const { EventEmitter } = require("events");
 const semaphore = require("semaphore");
-const { MarketObjectTypes } = require("./enums");
+const MarketObjectTypes = require("./enums");
+const winston = require("winston");
 const { wait } = require("./util");
 
 class BasicMultiClient extends EventEmitter {
-  constructor() {
+  constructor(params) {
     super();
     this._clients = new Map();
-
+    this.consumer = params.consumer;
     this.hasTickers = false;
     this.hasTrades = false;
-    this.hasCandles = false;
     this.hasLevel2Snapshots = false;
     this.hasLevel2Updates = false;
-    this.hasLevel3Snapshots = false;
     this.hasLevel3Updates = false;
     this.throttleMs = 250;
     this.sem = semaphore(3); // this can be overriden to allow more or less
@@ -26,10 +25,12 @@ class BasicMultiClient extends EventEmitter {
     }
   }
 
-  async close() {
+  async close(emitClosed = true) {
     for (let client of this._clients.values()) {
       (await client).close();
     }
+
+    if (emitClosed) this.emit("closed");
   }
 
   ////// ABSTRACT
@@ -41,7 +42,7 @@ class BasicMultiClient extends EventEmitter {
 
   subscribeTicker(market) {
     if (!this.hasTickers) return;
-    this._subscribe(market, this._clients, MarketObjectTypes.ticker);
+    this._subscribe(market, this._clients, MarketObjectTypes.ticker, "subscribing to ticker");
   }
 
   async unsubscribeTicker(market) {
@@ -51,21 +52,9 @@ class BasicMultiClient extends EventEmitter {
     }
   }
 
-  subscribeCandles(market) {
-    if (!this.hasCandles) return;
-    this._subscribe(market, this._clients, MarketObjectTypes.candle);
-  }
-
-  async unsubscribeCandles(market) {
-    if (!this.hasCandles) return;
-    if (this._clients.has(market.id)) {
-      (await this._clients.get(market.id)).unsubscribeCandle(market);
-    }
-  }
-
   subscribeTrades(market) {
     if (!this.hasTrades) return;
-    this._subscribe(market, this._clients, MarketObjectTypes.trade);
+    this._subscribe(market, this._clients, MarketObjectTypes.trade, "subscribing to trades");
   }
 
   async unsubscribeTrades(market) {
@@ -77,7 +66,12 @@ class BasicMultiClient extends EventEmitter {
 
   subscribeLevel2Updates(market) {
     if (!this.hasLevel2Updates) return;
-    this._subscribe(market, this._clients, MarketObjectTypes.level2update);
+    this._subscribe(
+      market,
+      this._clients,
+      MarketObjectTypes.level2update,
+      "subscribing to level 2 updates"
+    );
   }
 
   async unsubscribeLevel2Updates(market) {
@@ -89,7 +83,12 @@ class BasicMultiClient extends EventEmitter {
 
   subscribeLevel2Snapshots(market) {
     if (!this.hasLevel2Snapshots) return;
-    this._subscribe(market, this._clients, MarketObjectTypes.level2snapshot);
+    this._subscribe(
+      market,
+      this._clients,
+      MarketObjectTypes.level2snapshot,
+      "subscribing to level 2 snapshots"
+    );
   }
 
   async unsubscribeLevel2Snapshots(market) {
@@ -103,20 +102,14 @@ class BasicMultiClient extends EventEmitter {
     return new Promise(resolve => {
       this.sem.take(() => {
         let client = this._createBasicClient(clientArgs);
-        client.on("connecting", () => this.emit("connecting", clientArgs.market));
-        client.on("connected", () => this.emit("connected", clientArgs.market));
-        client.on("disconnected", () => this.emit("disconnected", clientArgs.market));
-        client.on("reconnecting", () => this.emit("reconnecting", clientArgs.market));
-        client.on("closing", () => this.emit("closing", clientArgs.market));
-        client.on("closed", () => this.emit("closed", clientArgs.market));
-        client.on("error", err => this.emit("error", err, clientArgs.market));
-        let clearSem = async () => {
-          await wait(this.throttleMs);
+        client._connect(); // manually perform a connection instead of waiting for a subscribe call
+        // construct a function so we can remove it...
+        let clearSem = () => {
           this.sem.leave();
+          client.removeListener("connected", clearSem);
           resolve(client);
         };
-        client.once("connected", clearSem);
-        client._connect();
+        client.on("connected", clearSem);
       });
     });
   }
@@ -139,53 +132,44 @@ class BasicMultiClient extends EventEmitter {
 
       if (marketObjectType === MarketObjectTypes.ticker) {
         let subscribed = client.subscribeTicker(market);
-        if (subscribed) {
-          client.on("ticker", (ticker, market) => {
-            this.emit("ticker", ticker, market);
-          });
-        }
-      }
-
-      if (marketObjectType === MarketObjectTypes.candle) {
-        let subscribed = client.subscribeCandles(market);
-        if (subscribed) {
-          client.on("candle", (candle, market) => {
-            this.emit("candle", candle, market);
-          });
-        }
+        // if (subscribed) {
+        //   client.on("ticker", (ticker, market) => {
+        //     this.emit("ticker", ticker, market);
+        //   });
+        // }
       }
 
       if (marketObjectType === MarketObjectTypes.trade) {
         let subscribed = client.subscribeTrades(market);
-        if (subscribed) {
-          client.on("trade", (trade, market) => {
-            this.emit("trade", trade, market);
-          });
-        }
+        // if (subscribed) {
+        //   client.on("trade", (trade, market) => {
+        //     this.emit("trade", trade, market);
+        //   });
+        // }
       }
 
       if (marketObjectType === MarketObjectTypes.level2update) {
         let subscribed = client.subscribeLevel2Updates(market);
-        if (subscribed) {
-          client.on("l2update", (l2update, market) => {
-            this.emit("l2update", l2update, market);
-          });
-          client.on("l2snapshot", (l2snapshot, market) => {
-            this.emit("l2snapshot", l2snapshot, market);
-          });
-        }
+        // if (subscribed) {
+        //   client.on("l2update", (l2update, market) => {
+        //     this.consumer.handleUpdate(l2update);
+        //   });
+        //   client.on("l2snapshot", (l2snapshot, market) => {
+        //     this.consumer.handleSnapshot(l2snapshot);
+        //   });
+        // }
       }
 
       if (marketObjectType === MarketObjectTypes.level2snapshot) {
         let subscribed = client.subscribeLevel2Snapshots(market);
-        if (subscribed) {
-          client.on("l2snapshot", (l2snapshot, market) => {
-            this.emit("l2snapshot", l2snapshot, market);
-          });
-        }
+        // if (subscribed) {
+        //   client.on("l2snapshot", (l2snapshot, market) => {
+        //     this.consumer.handleSnapshot(l2snapshot);
+        //   });
+        // }
       }
     } catch (ex) {
-      this.emit("error", ex, market);
+      winston.error("subscribe failed " + ex.message);
     }
   }
 }

@@ -1,56 +1,26 @@
 const bibox = require("./exchanges/bibox-client");
 const binance = require("./exchanges/binance-client");
-const binanceje = require("./exchanges/binanceje-client");
-const binanceus = require("./exchanges/binanceus-client");
 const bitfinex = require("./exchanges/bitfinex-client");
 const bitflyer = require("./exchanges/bitflyer-client");
 const bitmex = require("./exchanges/bitmex-client");
 const bitstamp = require("./exchanges/bitstamp-client");
 const bittrex = require("./exchanges/bittrex-client");
 const cex = require("./exchanges/cex-client");
-const coinbasepro = require("./exchanges/coinbasepro-client");
+const gdax = require("./exchanges/coinbasepro-client");
 const coinex = require("./exchanges/coinex-client");
 const ethfinex = require("./exchanges/ethfinex-client");
 const gateio = require("./exchanges/gateio-client");
 const gemini = require("./exchanges/gemini-client");
 const hitbtc = require("./exchanges/hitbtc-client");
-const huobi = require("./exchanges/huobi-client");
-const kucoin = require("./exchanges/kucoin-client");
+const huobipro = require("./exchanges/huobi-client");
 const kraken = require("./exchanges/kraken-client");
+const lbank = require("./exchanges/lbank-client");
 const okex = require("./exchanges/okex-client");
 const poloniex = require("./exchanges/poloniex-client");
 const upbit = require("./exchanges/upbit-client");
 const zb = require("./exchanges/zb-client");
 
 module.exports = {
-  // export all exchanges
-  bibox,
-  binance,
-  binanceje,
-  binanceus,
-  bitfinex,
-  bitflyer,
-  bitmex,
-  bitstamp,
-  bittrex,
-  cex,
-  coinbasepro,
-  coinex,
-  ethfinex,
-  gateio,
-  gemini,
-  hitbtc,
-  hitbtc2: hitbtc,
-  huobi,
-  huobipro: huobi,
-  kucoin,
-  kraken,
-  okex,
-  okex3: okex,
-  poloniex,
-  upbit,
-  zb,
-
   // export all legacy exchange names
   Bibox: bibox,
   Binance: binance,
@@ -63,19 +33,38 @@ module.exports = {
   Gateio: gateio,
   Gemini: gemini,
   HitBTC: hitbtc,
-  Huobi: huobi,
+  huobipro,
   Kraken: kraken,
   OKEx: okex,
-
   Poloniex: poloniex,
   Upbit: upbit,
+
+  // export all exchanges
+  bibox,
+  binance,
+  bitfinex,
+  bitflyer,
+  bitmex,
+  bitstamp,
+  bittrex,
+  cex,
+  gdax,
+  coinex,
+  ethfinex,
+  gateio,
+  gemini,
+  hitbtc,
+  kraken,
+  lbank,
+  okex,
+  poloniex,
+  upbit,
+  zb,
 
   // export all types
   Auction: require("./auction"),
   BasicClient: require("./basic-client"),
   BlockTrade: require("./block-trade"),
-  Candle: require("./candle"),
-  CandlePeriod: require("./enums").CandlePeriod,
   Level2Point: require("./level2-point"),
   Level2Snapshot: require("./level2-snapshot"),
   Level2Update: require("./level2-update"),

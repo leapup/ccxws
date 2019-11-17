@@ -5,12 +5,13 @@ const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
 
 class UpbitClient extends BasicClient {
-  constructor() {
+  constructor(params) {
     super("wss://api.upbit.com/websocket/v1", "Upbit");
 
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Snapshots = true;
+    this.consumer = params.consumer;
 
     this.debouceTimeoutHandles = new Map();
     this.debounceWait = 200;
@@ -18,7 +19,6 @@ class UpbitClient extends BasicClient {
 
   _sendSubTicker() {
     this._debounce("sub-ticker", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._tickerSubs.keys());
       this._wss.send(JSON.stringify([{ ticket: "tickers" }, { type: "ticker", codes: codes }]));
     });
@@ -26,7 +26,6 @@ class UpbitClient extends BasicClient {
 
   _sendUnsubTicker() {
     this._debounce("unsub-ticker", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._tickerSubs.keys());
       this._wss.send(JSON.stringify([{ ticket: "tickers" }, { type: "ticker", codes: codes }]));
     });
@@ -34,7 +33,6 @@ class UpbitClient extends BasicClient {
 
   _sendSubTrades() {
     this._debounce("sub-trades", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._tradeSubs.keys());
       this._wss.send(JSON.stringify([{ ticket: "trades" }, { type: "trade", codes: codes }]));
     });
@@ -42,7 +40,6 @@ class UpbitClient extends BasicClient {
 
   _sendUnsubTrades() {
     this._debounce("unsub-trades", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._tradeSubs.keys());
       this._wss.send(JSON.stringify([{ ticket: "trades" }, { type: "trade", codes: codes }]));
     });
@@ -50,7 +47,6 @@ class UpbitClient extends BasicClient {
 
   _sendSubLevel2Snapshots() {
     this._debounce("sub-l2snapshots", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._level2SnapshotSubs.keys());
       this._wss.send(
         JSON.stringify([{ ticket: "quotation" }, { type: "orderbook", codes: codes }])
@@ -60,7 +56,6 @@ class UpbitClient extends BasicClient {
 
   _sendUnsubLevel2Snapshots() {
     this._debounce("unsub-l2snapshots", () => {
-      if (!this._wss) return;
       let codes = Array.from(this._level2SnapshotSubs.keys());
       this._wss.send(
         JSON.stringify([{ ticket: "quotation" }, { type: "orderbook", codes: codes }])
@@ -99,6 +94,7 @@ class UpbitClient extends BasicClient {
 
       let ticker = this._constructTicker(msg, market);
       this.emit("ticker", ticker, market);
+      this.consumer.handleTicker(ticker);
       return;
     }
 
@@ -109,6 +105,7 @@ class UpbitClient extends BasicClient {
 
       let snapshot = this._constructLevel2Snapshot(msg, market);
       this.emit("l2snapshot", snapshot, market);
+      this.consumer.handleSnapshot(snapshot);
       return;
     }
   }
@@ -173,7 +170,7 @@ class UpbitClient extends BasicClient {
       high: high_price,
       low: low_price,
       volume: acc_trade_volume,
-      quoteVolume: (acc_trade_volume * trade_price).toFixed(8),
+      quoteVolume: (acc_trade_volume * trade_price),
       change: change_price,
       changePercent: change_rate,
     });
@@ -232,8 +229,9 @@ class UpbitClient extends BasicClient {
        bid_size: 267304509.61145836 } ],
   stream_type: 'SNAPSHOT' }
     */
-    let asks = msg.orderbook_units.map(p => new Level2Point(s(p.ask_price), s(p.ask_size)));
-    let bids = msg.orderbook_units.map(p => new Level2Point(s(p.bid_price), s(p.bid_size)));
+
+    let asks = msg.orderbook_units.map(p => new Level2Point(p.ask_price, p.ask_size));
+    let bids = msg.orderbook_units.map(p => new Level2Point(p.bid_price, p.bid_size));
     return new Level2Snapshot({
       exchange: "Upbit",
       base: market.base,
@@ -242,14 +240,6 @@ class UpbitClient extends BasicClient {
       asks,
       bids,
     });
-  }
-}
-
-function s(v) {
-  if (typeof v === "number") {
-    return v.toFixed(8);
-  } else {
-    return v;
   }
 }
 

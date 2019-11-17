@@ -1,5 +1,6 @@
 const { EventEmitter } = require("events");
 const WebSocket = require("ws");
+const winston = require("winston");
 
 class SmartWss extends EventEmitter {
   constructor(wssPath) {
@@ -26,15 +27,11 @@ class SmartWss extends EventEmitter {
   /**
    * Closes the connection
    */
-  close() {
-    this.emit("closing");
+  async close() {
+    winston.info("closing connection to", this._wssPath);
     if (this._wss) {
       this._wss.removeAllListeners();
-      this._wss.on("close", () => this.emit("closed"));
-      this._wss.on("error", err => {
-        if (err.message !== "WebSocket was closed before the connection was established") return;
-        this.emit("error", err);
-      });
+      this._wss.on("close", () => this.emit("disconnected"));
       this._wss.close();
     }
   }
@@ -49,7 +46,7 @@ class SmartWss extends EventEmitter {
       try {
         this._wss.send(data);
       } catch (e) {
-        this.emit("error", e);
+        winston.error(e.message);
       }
     }
   }
@@ -60,18 +57,19 @@ class SmartWss extends EventEmitter {
    * Attempts a connection and will either fail or timeout otherwise.
    */
   _attemptConnect() {
+    winston.info("attempting connection");
     return new Promise(resolve => {
       let wssPath = this._wssPath;
-      this.emit("connecting");
+      winston.info("connecting to", wssPath);
       this._wss = new WebSocket(wssPath, { perMessageDeflate: false });
       this._wss.on("open", () => {
+        winston.info("connected to", wssPath);
         this._connected = true;
-        this.emit("open"); // deprecated
-        this.emit("connected");
+        this.emit("open");
         resolve();
       });
       this._wss.on("close", () => this._closeCallback());
-      this._wss.on("error", err => this.emit("error", err));
+      this._wss.on("error", err => winston.error(this._wssPath, err));
       this._wss.on("message", msg => this.emit("message", msg));
     });
   }
@@ -80,6 +78,7 @@ class SmartWss extends EventEmitter {
    * Handles the closing event by reconnecting
    */
   _closeCallback() {
+    winston.warn("disconnected from", this._wssPath);
     this._connected = false;
     this._wss = null;
     this.emit("disconnected");
@@ -98,7 +97,7 @@ class SmartWss extends EventEmitter {
         await this._attemptConnect();
         return;
       } catch (ex) {
-        this.emit("error", ex);
+        winston.error(ex);
       }
     }
   }
