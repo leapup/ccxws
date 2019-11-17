@@ -1,5 +1,4 @@
 const moment = require("moment");
-const winston = require("winston");
 const semaphore = require("semaphore");
 const BasicClient = require("../basic-client");
 const Ticker = require("../ticker");
@@ -9,10 +8,10 @@ const Level2Snapshot = require("../level2-snapshot");
 const Level2Update = require("../level2-update");
 
 class HitBTCClient extends BasicClient {
-  constructor(params) {
-    super("wss://api.hitbtc.com/api/2/ws", "HitBTC", params.consumer);
+  constructor() {
+    super("wss://api.hitbtc.com/api/2/ws", "HitBTC");
     this._id = 0;
-    this.consumer = params.consumer;
+
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Updates = true;
@@ -116,7 +115,6 @@ class HitBTCClient extends BasicClient {
     // so we can ignore messages that do not can an id value:
     // { jsonrpc: '2.0', result: true, id: null }
     if (msg.result !== undefined && msg.id) {
-      if (!msg.result) winston.warn(msg);
       return;
     }
 
@@ -128,7 +126,6 @@ class HitBTCClient extends BasicClient {
 
       let ticker = this._constructTicker(msg.params, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
     }
 
     if (msg.method === "updateTrades") {
@@ -147,8 +144,7 @@ class HitBTCClient extends BasicClient {
       if (!market) return;
 
       let result = this._constructLevel2Snapshot(msg.params, market);
-      this.emit('l2snapshot');
-      this.consumer.handleSnapshot(result);
+      this.emit("l2snapshot", result, market);
       return;
     }
 
@@ -157,16 +153,17 @@ class HitBTCClient extends BasicClient {
       if (!market) return;
 
       let result = this._constructLevel2Update(msg.params, market);
-      this.emit('l2update');
-      this.consumer.handleUpdate(result);
+      this.emit("l2update", result, market);
       return;
     }
   }
 
   _constructTicker(param, market) {
     let { ask, bid, last, open, low, high, volume, volumeQuote, timestamp } = param;
-    let change = (parseFloat(last) - parseFloat(open));
-    let changePercent = (((parseFloat(last) - parseFloat(open)) / parseFloat(open)) * 100);
+    let change = (parseFloat(last) - parseFloat(open)).toFixed(8);
+    let changePercent = (((parseFloat(last) - parseFloat(open)) / parseFloat(open)) * 100).toFixed(
+      8
+    );
     return new Ticker({
       exchange: "HitBTC",
       base: market.base,
@@ -194,7 +191,7 @@ class HitBTCClient extends BasicClient {
       exchange: "HitBTC",
       base: market.base,
       quote: market.quote,
-      tradeId: id,
+      tradeId: id.toFixed(),
       side,
       unix,
       price,
@@ -207,7 +204,7 @@ class HitBTCClient extends BasicClient {
     let asks = ask.map(p => new Level2Point(p.price, p.size));
     let bids = bid.map(p => new Level2Point(p.price, p.size));
     return new Level2Snapshot({
-      exchange: "HitBTC2",
+      exchange: "HitBTC",
       base: market.base,
       quote: market.quote,
       sequenceId: sequence,
@@ -221,7 +218,7 @@ class HitBTCClient extends BasicClient {
     let asks = ask.map(p => new Level2Point(p.price, p.size, p.count));
     let bids = bid.map(p => new Level2Point(p.price, p.size, p.count));
     return new Level2Update({
-      exchange: "HitBTC2",
+      exchange: "HitBTC",
       base: market.base,
       quote: market.quote,
       sequenceId: sequence,

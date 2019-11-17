@@ -1,15 +1,13 @@
 const BasicClient = require("../basic-client");
 const zlib = require("zlib");
-const winston = require("winston");
 const Ticker = require("../ticker");
 const Trade = require("../trade");
 const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
 
 class HuobiClient extends BasicClient {
-  constructor(params) {
-    super("wss://api.huobi.pro/ws", "huobipro", params.consumer);
-    this.consumer = params.consumer;
+  constructor() {
+    super("wss://api.huobi.pro/ws", "Huobi");
     this.hasTickers = true;
     this.hasTrades = true;
     this.hasLevel2Snapshots = true;
@@ -77,7 +75,7 @@ class HuobiClient extends BasicClient {
   _onMessage(raw) {
     zlib.unzip(raw, (err, resp) => {
       if (err) {
-        winston.error(err);
+        this.emit("error", err);
         return;
       }
 
@@ -114,7 +112,6 @@ class HuobiClient extends BasicClient {
 
         let ticker = this._constructTicker(msgs.tick, market);
         this.emit("ticker", ticker, market);
-        this.consumer.handleTicker(ticker);
         return;
       }
 
@@ -125,8 +122,7 @@ class HuobiClient extends BasicClient {
         if (!market) return;
 
         let update = this._constructLevel2Snapshot(msgs, market);
-        this.emit('l2snapshot');
-        this.consumer.handleSnapshot(update);
+        this.emit("l2snapshot", update, market);
         return;
       }
     });
@@ -137,43 +133,42 @@ class HuobiClient extends BasicClient {
     let dayChange = close - open;
     let dayChangePercent = ((close - open) / open) * 100;
     return new Ticker({
-      exchange: "huobipro",
+      exchange: "Huobi",
       base: market.base,
       quote: market.quote,
       timestamp: Date.now(),
-      last: close,
-      open: open,
-      high: high,
-      low: low,
-      volume: amount,
-      quoteVolume: vol,
-      change: dayChange,
-      changePercent: dayChangePercent,
+      last: close.toFixed(8),
+      open: open.toFixed(8),
+      high: high.toFixed(8),
+      low: low.toFixed(8),
+      volume: amount.toFixed(8),
+      quoteVolume: vol.toFixed(8),
+      change: dayChange.toFixed(8),
+      changePercent: dayChangePercent.toFixed(8),
     });
   }
 
   _constructTradesFromMessage(datum, market) {
     let { amount, direction, ts, price, id } = datum;
     let unix = Math.trunc(parseInt(ts));
-
     return new Trade({
-      exchange: "huobipro",
+      exchange: "Huobi",
       base: market.base,
       quote: market.quote,
       tradeId: id,
       side: direction,
       unix,
       price,
-      amount,
+      amount: typeof amount === "number" ? amount.toFixed(8) : amount,
     });
   }
 
   _constructLevel2Snapshot(msg, market) {
     let { ts, tick } = msg;
-    let bids = tick.bids.map(p => new Level2Point(p[0], p[1]));
-    let asks = tick.asks.map(p => new Level2Point(p[0], p[1]));
+    let bids = tick.bids.map(p => new Level2Point(p[0].toFixed(8), p[1].toFixed(8)));
+    let asks = tick.asks.map(p => new Level2Point(p[0].toFixed(8), p[1].toFixed(8)));
     return new Level2Snapshot({
-      exchange: "huobipro",
+      exchange: "Huobi",
       base: market.base,
       quote: market.quote,
       timestampMs: ts,

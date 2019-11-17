@@ -1,5 +1,4 @@
 const BasicClient = require("../basic-client");
-const winston = require("winston");
 const semaphore = require("semaphore");
 const { wait } = require("../util");
 const https = require("../https");
@@ -143,13 +142,13 @@ class BitFlyerClient extends BasicClient {
       base: market.base,
       quote: market.quote,
       timestamp: moment.utc(timestamp).valueOf(),
-      last: ltp,
-      volume: volume,
-      quoteVolume: volume_by_product,
-      bid: best_bid,
-      bidVolume: best_bid_size,
-      ask: best_ask,
-      askVolume: best_ask_size,
+      last: ltp.toFixed(8),
+      volume: volume.toFixed(8),
+      quoteVolume: volume_by_product.toFixed(8),
+      bid: best_bid.toFixed(8),
+      bidVolume: best_bid_size.toFixed(8),
+      ask: best_ask.toFixed(8),
+      askVolume: best_ask_size.toFixed(8),
     });
   }
 
@@ -171,19 +170,19 @@ class BitFlyerClient extends BasicClient {
       exchange: "bitFlyer",
       base: market.base,
       quote: market.quote,
-      tradeId: id,
+      tradeId: id.toFixed(),
       unix,
       side: side.toLowerCase(),
-      price: price,
-      amount: size,
+      price: price.toFixed(8),
+      amount: size.toFixed(8),
       buyOrderId: buy_child_order_acceptance_id,
       sellOrderId: sell_child_order_acceptance_id,
     });
   }
 
   _createLevel2Update(msg, market) {
-    let asks = msg.asks.map(p => new Level2Point(p.price, p.size));
-    let bids = msg.bids.map(p => new Level2Point(p.price, p.size));
+    let asks = msg.asks.map(p => new Level2Point(p.price.toFixed(8), p.size.toFixed(8)));
+    let bids = msg.bids.map(p => new Level2Point(p.price.toFixed(8), p.size.toFixed(8)));
 
     return new Level2Update({
       exchange: "bitFlyer",
@@ -197,12 +196,11 @@ class BitFlyerClient extends BasicClient {
   async _requestLevel2Snapshot(market) {
     this._restSem.take(async () => {
       try {
-        winston.info(`requesting snapshot for ${market.id}`);
         let remote_id = market.id;
         let uri = `https://api.bitflyer.com/v1/board?product_code=${remote_id}`;
         let raw = await https.get(uri);
-        let asks = raw.asks.map(p => new Level2Point(p.price, p.size));
-        let bids = raw.bids.map(p => new Level2Point(p.price, p.size));
+        let asks = raw.asks.map(p => new Level2Point(p.price.toFixed(8), p.size.toFixed(8)));
+        let bids = raw.bids.map(p => new Level2Point(p.price.toFixed(8), p.size.toFixed(8)));
         let snapshot = new Level2Snapshot({
           exchange: "bitFlyer",
           base: market.base,
@@ -212,7 +210,7 @@ class BitFlyerClient extends BasicClient {
         });
         this.emit("l2snapshot", snapshot, market);
       } catch (ex) {
-        winston.warn(`failed to fetch snapshot for ${market.id} - ${ex}`);
+        this._onError(ex);
         this._requestLevel2Snapshot(market);
       } finally {
         await wait(this.REST_REQUEST_DELAY_MS);

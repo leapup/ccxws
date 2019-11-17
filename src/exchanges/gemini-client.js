@@ -4,16 +4,17 @@ const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
 const Level2Update = require("../level2-update");
 const SmartWss = require("../smart-wss");
-const winston = require("winston");
 
 class GeminiClient extends EventEmitter {
-  constructor(params) {
+  constructor() {
     super();
     this._name = "Gemini";
     this._subscriptions = new Map();
     this.reconnectIntervalMs = 30 * 1000;
-    this.consumer = params.consumer;
+
+    this.hasTickers = false;
     this.hasTrades = true;
+    this.hasCandles = false;
     this.hasLevel2Snapshots = false;
     this.hasLevel2Updates = true;
     this.hasLevel3Snapshots = false;
@@ -55,8 +56,6 @@ class GeminiClient extends EventEmitter {
 
     if (subscription && subscription[mode]) return;
 
-    winston.info("subscribing to " + mode, this._name, remote_id);
-
     if (!subscription) {
       subscription = {
         market,
@@ -81,8 +80,6 @@ class GeminiClient extends EventEmitter {
 
     if (!subscription) return;
 
-    winston.info("unsubscribing from " + mode, this._name, remote_id);
-
     subscription[mode] = false;
     if (!subscription.trades && !subscription.level2updates) {
       this._close(this._subscriptions.get(remote_id));
@@ -96,11 +93,35 @@ class GeminiClient extends EventEmitter {
   _connect(remote_id) {
     let wssPath = "wss://api.gemini.com/v1/marketdata/" + remote_id + "?heartbeat=true";
     let wss = new SmartWss(wssPath);
-    wss.on("open", () => this._onConnected(remote_id));
-    wss.on("message", raw => this._onMessage(remote_id, raw));
+    wss.on("error", err => this._onError(remote_id, err));
+    wss.on("connecting", () => this._onConnecting(remote_id));
+    wss.on("connected", () => this._onConnected(remote_id));
     wss.on("disconnected", () => this._onDisconnected(remote_id));
+    wss.on("closing", () => this._onClosing(remote_id));
+    wss.on("closed", () => this._onClosed(remote_id));
+    wss.on("message", raw => {
+      try {
+        this._onMessage(remote_id, raw);
+      } catch (err) {
+        this._onError(remote_id, err);
+      }
+    });
     wss.connect();
     return wss;
+  }
+
+  /**
+   * Handles an error
+   */
+  _onError(remote_id, err) {
+    this.emit("error", err, remote_id);
+  }
+
+  /**
+   * Fires when a socket is connecting
+   */
+  _onConnecting(remote_id) {
+    this.emit("connecting", remote_id);
   }
 
   /**
@@ -109,10 +130,10 @@ class GeminiClient extends EventEmitter {
   _onConnected(remote_id) {
     let subscription = this._subscriptions.get(remote_id);
     if (!subscription) {
-      winston.warn(`${remote_id} is not subscribed`);
       return;
     }
     this._startReconnectWatcher(subscription);
+    this.emit("connected", remote_id);
   }
 
   /**
@@ -120,8 +141,22 @@ class GeminiClient extends EventEmitter {
    */
   _onDisconnected(remote_id) {
     this._stopReconnectWatcher(this._subscriptions.get(remote_id));
-    this.emit('disconnected');
-    this.consumer.disconnected(this._name,remote_id);
+    this.emit("disconnected", remote_id);
+  }
+
+  /**
+   * Fires when the underlying socket is closing
+   */
+  _onClosing(remote_id) {
+    this._stopReconnectWatcher(this._subscriptions.get(remote_id));
+    this.emit("closing", remote_id);
+  }
+
+  /**
+   * Fires when the underlying socket has closed
+   */
+  _onClosed(remote_id) {
+    this.emit("closed", remote_id);
   }
 
   /**
@@ -129,15 +164,16 @@ class GeminiClient extends EventEmitter {
    */
   _close(subscription) {
     if (subscription && subscription.wss) {
-      subscription.wss.close();
+      try {
+        subscription.wss.close();
+      } catch (ex) {
+        if (ex.message === "WebSocket was closed before the connection was established") return;
+        this.emit("error", ex);
+      }
       subscription.wss = undefined;
       this._stopReconnectWatcher(subscription);
     } else {
-      this._subscriptions.forEach(sub => {
-        this._stopReconnectWatcher(sub);
-        sub.wss.close();
-      });
-      this.emit("closed");
+      this._subscriptions.forEach(sub => this._close(sub));
       this._subscriptions = new Map();
     }
   }
@@ -146,10 +182,11 @@ class GeminiClient extends EventEmitter {
    * Reconnects the socket
    */
   _reconnect(subscription) {
+    this.emit("reconnecting", subscription.remoteId);
+    subscription.wss.once("closed", () => {
+      subscription.wss = this._connect(subscription.remoteId);
+    });
     this._close(subscription);
-    subscription.wss = this._connect(subscription.remoteId);
-    this.emit('reconnected');
-    this.consumer.reconnected(this._name,subscription.remoteId);
   }
 
   /**
@@ -167,8 +204,10 @@ class GeminiClient extends EventEmitter {
    * Stops an interval to check if a reconnection is required
    */
   _stopReconnectWatcher(subscription) {
-    clearInterval(subscription.reconnectIntervalHandle);
-    subscription.reconnectIntervalHandle = undefined;
+    if (subscription) {
+      clearInterval(subscription.reconnectIntervalHandle);
+      subscription.reconnectIntervalHandle = undefined;
+    }
   }
 
   /**
@@ -213,12 +252,10 @@ class GeminiClient extends EventEmitter {
         let updates = msg.events.filter(p => p.type === "change");
         if (socket_sequence === 0) {
           let snapshot = this._constructL2Snapshot(updates, market, eventId);
-          this.emit('l2snapshot');
-          this.consumer.handleSnapshot(snapshot);
+          this.emit("l2snapshot", snapshot, market);
         } else {
           let update = this._constructL2Update(updates, market, eventId, timestampms);
-          this.emit('l2update');
-          this.consumer.handleUpdate(update);
+          this.emit("l2update", update, market);
         }
         return;
       }
@@ -234,7 +271,7 @@ class GeminiClient extends EventEmitter {
       exchange: "Gemini",
       base: market.base,
       quote: market.quote,
-      tradeId: event.tid,
+      tradeId: event.tid.toFixed(),
       side,
       unix: timestamp,
       price,

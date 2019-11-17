@@ -1,5 +1,4 @@
 const semaphore = require("semaphore");
-const winston = require("winston");
 const { wait } = require("../util");
 const https = require("../https");
 const BasicClient = require("../basic-client");
@@ -16,11 +15,10 @@ class BitstampClient extends BasicClient {
     Documentation for Version 2:
       https://www.bitstamp.net/websocket/v2/
    */
-  constructor(params) {
+  constructor() {
     super();
     this._name = "Bitstamp";
     this._wssPath = "wss://ws.bitstamp.net";
-    this.consumer = params.consumer;
     this.requestSnapshot = true;
     this.hasTrades = true;
     this.hasLevel2Snapshots = true;
@@ -99,13 +97,7 @@ class BitstampClient extends BasicClient {
   /////////////////////////////////////////////
 
   _onMessage(raw) {
-    let msg;
-    try {
-      msg = JSON.parse(raw);
-    } catch (ex) {
-      winston.warn(ex.stack);
-      return;
-    }
+    let msg = JSON.parse(raw);
 
     if (msg.event === "trade" && msg.channel.startsWith("live_trades")) {
       this._onTrade(msg);
@@ -162,7 +154,7 @@ class BitstampClient extends BasicClient {
       exchange: "Bitstamp",
       base: market.base,
       quote: market.quote,
-      tradeId: data.id,
+      tradeId: data.id.toFixed(),
       unix: Math.round(parseInt(data.microtimestamp) / 1000), // convert to milli
       side: data.type === 1 ? "sell" : "buy",
       price: data.price_str,
@@ -219,7 +211,6 @@ class BitstampClient extends BasicClient {
     });
 
     this.emit("l2snapshot", spot, market);
-    this.consumer.handleSnapshot(spot);
   }
 
   /**
@@ -268,7 +259,6 @@ class BitstampClient extends BasicClient {
     });
 
     this.emit("l2update", update, market);
-    this.consumer.handleUpdate(update);
   }
 
   /////////////////////////////////////////////
@@ -286,7 +276,6 @@ class BitstampClient extends BasicClient {
   async _requestLevel2Snapshot(market) {
     this._restSem.take(async () => {
       try {
-        winston.info(`requesting snapshot for ${market.id}`);
         let remote_id = market.id;
         let uri = `https://www.bitstamp.net/api/v2/order_book/${remote_id}?group=1`;
         let raw = await https.get(uri);
@@ -302,9 +291,8 @@ class BitstampClient extends BasicClient {
           bids,
         });
         this.emit("l2snapshot", snapshot, market);
-        this.consumer.handleSnapshot(snapshot);
       } catch (ex) {
-        winston.warn(`failed to fetch snapshot for ${market.id} - ${ex}`);
+        this.emit("error", ex);
         this._requestLevel2Snapshot(market);
       } finally {
         await wait(this.REST_REQUEST_DELAY_MS);
