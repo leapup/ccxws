@@ -261,7 +261,7 @@ class BinanceClient extends EventEmitter {
 
       let candle = this._constructCandle(msg, market);
       this.emit("candle", candle, market);
-      this.consumer.handleCandle(candle);
+      this.consumer.handleCandle(candle, market);
       return;
     }
 
