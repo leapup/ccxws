@@ -188,7 +188,6 @@ class BitfinexClient extends BasicClient {
       askVolume: askSize,
     });
     this.emit('ticker', ticker);
-    this.consumer.handleTicker(ticker);
   }
 
   _onTradeMessage(msg) {

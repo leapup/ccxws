@@ -128,7 +128,6 @@ class HitBTCClient extends BasicClient {
 
       let ticker = this._constructTicker(msg.params, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
     }
 
     if (msg.method === "updateTrades") {

@@ -114,7 +114,6 @@ class HuobiClient extends BasicClient {
 
         let ticker = this._constructTicker(msgs.tick, market);
         this.emit("ticker", ticker, market);
-        this.consumer.handleTicker(ticker);
         return;
       }
 

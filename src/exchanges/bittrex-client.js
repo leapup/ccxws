@@ -335,8 +335,7 @@ class BittrexClient extends EventEmitter {
             if (this._tickerSubs.has(raw.MarketName)) {
               let market = this._tickerSubs.get(raw.MarketName);
               let ticker = this._constructTicker(raw, market);
-              this.emit("ticker", ticker, market);
-              this.consumer.handleTicker(ticker);
+              // this.emit("ticker", ticker, market);
             }
           }
         }

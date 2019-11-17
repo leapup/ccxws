@@ -98,7 +98,6 @@ class CoinbaseProClient extends BasicClient {
       let market = this._tickerSubs.get(product_id);
       let ticker = this._constructTicker(msg, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
     }
 
     if (type === "match" && this._tradeSubs.has(product_id)) {

@@ -180,7 +180,6 @@ class SingleCexClient extends BasicAuthClient {
 
       let ticker = this._constructTicker(data, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
       return;
     }
 

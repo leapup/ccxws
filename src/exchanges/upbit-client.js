@@ -94,7 +94,6 @@ class UpbitClient extends BasicClient {
 
       let ticker = this._constructTicker(msg, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
       return;
     }
 

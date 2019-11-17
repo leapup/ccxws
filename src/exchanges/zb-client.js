@@ -112,7 +112,6 @@ class ZBClient extends BasicClient {
     if (msg.channel.endsWith('_ticker')) {
       let ticker = this._constructTicker(msg);
       this.emit('ticker', ticker);
-      this.consumer.handleTicker(ticker);
       return;
     }
     /*

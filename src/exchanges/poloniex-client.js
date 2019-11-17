@@ -233,7 +233,6 @@ class PoloniexClient extends BasicClient {
 
       let ticker = this._createTicker(updates, market);
       this.emit("ticker", ticker, market);
-      this.consumer.handleTicker(ticker);
       return;
     }
 

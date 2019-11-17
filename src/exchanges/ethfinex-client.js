@@ -175,7 +175,6 @@ class EthfinexClient extends BasicClient {
       askVolume: askSize,
     });
     this.emit("ticker", ticker, market);
-    this.consumer.handleTicker(ticker);
   }
 
   _onTradeMessage(msg) {

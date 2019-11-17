@@ -39,7 +39,7 @@ class BinanceClient extends EventEmitter {
 
   //////////////////////////////////////////////
 
-  subscribeTicker(market) {
+  authorization(market) {
     this._subscribe(market, "subscribing to ticker", this._tickerSubs);
   }
 
@@ -181,7 +181,6 @@ class BinanceClient extends EventEmitter {
 
         let ticker = this._constructTicker(raw, market);
         this.emit("ticker", ticker, market);
-        this.consumer.handleTicker(ticker);
       }
     }
 
