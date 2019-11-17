@@ -181,7 +181,7 @@ class BinanceClient extends EventEmitter {
 
         let ticker = this._constructTicker(raw, market);
         this.emit("ticker", ticker, market);
-        this.consumer.handleTicker(ticker);
+        this.consumer.handleTicker(ticker, market);
       }
     }
 
