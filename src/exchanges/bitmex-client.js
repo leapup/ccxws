@@ -1,5 +1,6 @@
 const BasicClient = require("../basic-client");
 const Trade = require("../trade");
+const Ticker = require("../ticker");
 const Level2Point = require("../level2-point");
 const Level2Snapshot = require("../level2-snapshot");
 const Level2Update = require("../level2-update");
@@ -7,11 +8,13 @@ const moment = require("moment");
 
 class BitmexClient extends BasicClient {
   /**
-    Documentation:
-    https://www.bitmex.com/app/wsAPI
+   Documentation:
+   https://www.bitmex.com/app/wsAPI
    */
-  constructor() {
-    super("wss://www.bitmex.com/realtime", "BitMEX");
+  constructor(params) {
+    super("wss://www.bitmex.com/realtime", "BitMEX", params.consumer);
+    this._name = "Bitmex";
+    this.consumer = params.consumer;
     this.hasTrades = true;
     this.hasLevel2Updates = true;
     this.constructL2Price = true;
@@ -66,16 +69,19 @@ class BitmexClient extends BasicClient {
         if (!market) continue;
 
         let trade = this._constructTrades(datum, market);
-        this.emit("trade", trade, market);
+        let ticker = this._constructTicker(trade, market);
+        // this.emit("trade", trade, market);
+        this.emit("ticker", ticker, market);
+        this.consumer.handleTicker(ticker, market, market.id);
       }
       return;
     }
 
-    if (table === "orderBookL2") {
+    if (table === "orderBookL2" && message.data.length > 0) {
       /**
-        From testing, we've never encountered non-uniform markets in a single
-        message broadcast and will assume uniformity (though we will validate
-        in the construction methods).
+       From testing, we've never encountered non-uniform markets in a single
+       message broadcast and will assume uniformity (though we will validate
+       in the construction methods).
        */
       let remote_id = message.data[0].symbol;
       let market = this._level2UpdateSubs.get(remote_id);
@@ -83,19 +89,21 @@ class BitmexClient extends BasicClient {
       if (!market) return;
 
       /**
-        The partial action is sent when there is a new subscription. It contains
-        the snapshot of data. Updates may arrive prior to the snapshot but can
-        be discarded.
+       The partial action is sent when there is a new subscription. It contains
+       the snapshot of data. Updates may arrive prior to the snapshot but can
+       be discarded.
 
-        Otherwise it will be an insert, update, or delete action. All three of
-        those will be handles in l2update messages.
+       Otherwise it will be an insert, update, or delete action. All three of
+       those will be handles in l2update messages.
        */
       if (action === "partial") {
         let snapshot = this._constructLevel2Snapshot(message.data, market);
-        this.emit("l2snapshot", snapshot, market);
+        this.emit("l2snapshot", snapshot);
+        this.consumer.handleSnapshot(snapshot);
       } else {
         let update = this._constructLevel2Update(message, market);
-        this.emit("l2update", update, market);
+        this.emit("l2update", update);
+        this.consumer.handleUpdate(update);
       }
       return;
     }
@@ -118,12 +126,30 @@ class BitmexClient extends BasicClient {
     });
   }
 
+  _constructTicker(msg, market) {
+    let timestamp = msg.unix;
+    let volume = msg.amount;
+    let high = msg.price;
+    let low = msg.price;
+
+    return new Ticker({
+      exchange: "Bitmex",
+      base: market.base,
+      quote: market.quote,
+      timestamp: timestamp,
+      last: null,
+      open: null,
+      high,
+      low,
+      volume,
+    });
+  }
   /**
-    Snapshot message are sent when an l2orderbook is subscribed to.
-    This part is necessary to maintain a proper orderbook because
-    BitMEX sends updates with a unique price key and does not
-    include a price value. This code will maintain the price map
-    so that update messages can be constructed with a price.
+   Snapshot message are sent when an l2orderbook is subscribed to.
+   This part is necessary to maintain a proper orderbook because
+   BitMEX sends updates with a unique price key and does not
+   include a price value. This code will maintain the price map
+   so that update messages can be constructed with a price.
    */
   _constructLevel2Snapshot(data, market) {
     let asks = [];
@@ -161,36 +187,36 @@ class BitmexClient extends BasicClient {
   }
 
   /**
-    Update messages will arrive as either insert, update, or delete
-    messages. The data payload appears to be uniform for a market.
-    This code will do the heavy lifting on remapping the pricing
-    structure. BitMEX sends hte updates without a price and instead
-    include a unique identifer for the asset and the price.
+   Update messages will arrive as either insert, update, or delete
+   messages. The data payload appears to be uniform for a market.
+   This code will do the heavy lifting on remapping the pricing
+   structure. BitMEX sends hte updates without a price and instead
+   include a unique identifer for the asset and the price.
 
-    Insert:
-      {
+   Insert:
+   {
         table: 'orderbookL2'
         action: 'insert'
         data: [{ symbol: 'XBTUSD', id: 8799198150, side: 'Sell', size: 1, price: 8018.5 }]
       }
 
-    Update:
-      {
+   Update:
+   {
         table: 'orderBookL2',
         action: 'update',
         data: [ { symbol: 'XBTUSD', id: 8799595600, side: 'Sell', size: 258136 } ]
       }
 
-    Delete:
-      {
+   Delete:
+   {
         table: 'orderBookL2',
         action: 'delete',
         data: [ { symbol: 'XBTUSD', id: 8799198650, side: 'Sell' } ]
       }
 
-    We will standardize these to the CCXWS format:
-      - Insert and update will have price and size
-      - Delete will have a size of 0.
+   We will standardize these to the CCXWS format:
+   - Insert and update will have price and size
+   - Delete will have a size of 0.
    */
   _constructLevel2Update(msg, market) {
     // get the data from the message
@@ -205,12 +231,12 @@ class BitmexClient extends BasicClient {
       let size;
 
       /**
-        In our testing, we've always seen message uniformity in the symbols.
-        For performance reasons we're going to batch these into a single
-        response. But if we have a piece of data that doesn't match the symbol
-        we want to throw an error instead of polluting the orderbook with
-        bad data.
-      */
+       In our testing, we've always seen message uniformity in the symbols.
+       For performance reasons we're going to batch these into a single
+       response. But if we have a piece of data that doesn't match the symbol
+       we want to throw an error instead of polluting the orderbook with
+       bad data.
+       */
       if (datum.symbol !== market.id) {
         throw new Error(`l2update symbol mismatch, expected ${market.id}, got ${datum.symbol}`);
       }
