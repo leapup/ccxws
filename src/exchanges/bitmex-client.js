@@ -128,17 +128,17 @@ class BitmexClient extends BasicClient {
 
   _constructTicker(msg, market) {
     let timestamp = msg.unix;
-    let volume = msg.amount;
-    let high = msg.price;
-    let low = msg.price;
+    let volume = +msg.amount;
+    let high = +msg.price;
+    let low = +msg.price;
 
     return new Ticker({
       exchange: "Bitmex",
       base: market.base,
       quote: market.quote,
       timestamp: timestamp,
-      last: null,
-      open: null,
+      last: +msg.price,
+      open: +msg.price,
       high,
       low,
       volume,

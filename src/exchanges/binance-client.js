@@ -40,7 +40,7 @@ class BinanceClient extends EventEmitter {
   //////////////////////////////////////////////
 
   subscribeTicker(market) {
-    this._subscribe(market, "subscribing to ticker", this._tickerSubs);
+    // this._subscribe(market, "subscribing to ticker", this._tickerSubs);
   }
 
   unsubscribeTicker(market) {
@@ -195,6 +195,8 @@ class BinanceClient extends EventEmitter {
         ? this._constructAggTrade(msg, market)
         : this._constructRawTrade(msg, market);
       this.emit("trade", trade, market);
+      let ticker = this._constructConsumerTicker(trade, market);
+      this.consumer.handleTicker(ticker, market);
       return;
     }
 
@@ -273,6 +275,24 @@ class BinanceClient extends EventEmitter {
       side,
       price,
       amount,
+    });
+  }
+  _constructConsumerTicker(msg, market) {
+    let timestamp = msg.unix;
+    let volume = +msg.amount;
+    let high = +msg.price;
+    let low = +msg.price;
+
+    return new Ticker({
+      exchange: "Binance",
+      base: market.base,
+      quote: market.quote,
+      timestamp: timestamp,
+      last: +msg.price,
+      open: +msg.price,
+      high,
+      low,
+      volume,
     });
   }
 
